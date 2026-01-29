@@ -8,13 +8,14 @@ class Equipamento(models.Model):
         ('FIBRA', 'Fibra Óptica'),
         ('RADIO', 'Via Rádio'),
         ('FERRAMENTA', 'Ferramentas'),
+        ('TORRES', 'Equipamento para Torres'), # <--- NOVA CATEGORIA AQUI
     ]
     
     # Informações Básicas
     nome = models.CharField(max_length=100)
     tipo = models.CharField(max_length=20, choices=TIPO_CHOICES)
     
-    # NOVOS CAMPOS (Especificações e Foto)
+    # NOVOS CAMPOS
     especificacoes = models.TextField(blank=True, null=True, verbose_name="Especificações Técnicas")
     foto = models.ImageField(upload_to='equipamentos/', blank=True, null=True, verbose_name="Foto do Produto")
     observacao = models.TextField(blank=True, null=True, verbose_name="Observações Gerais")
@@ -33,19 +34,19 @@ class EstoqueTecnico(models.Model):
     quantidade = models.IntegerField(default=0, verbose_name="Qtd com Técnico")
 
     class Meta:
-        unique_together = ('tecnico', 'equipamento') # Evita duplicidade
-        verbose_name = "Carteira do Técnico"
-        verbose_name_plural = "Carteiras dos Técnicos"
+        unique_together = ('tecnico', 'equipamento')
+        verbose_name = "Carteira do Técnico (Saldo)"
+        verbose_name_plural = "Carteiras dos Técnicos (Saldos)"
 
     def __str__(self):
         return f"{self.tecnico.username} tem {self.quantidade}x {self.equipamento.nome}"
 
-# 3. A Movimentação (O registro seguro)
+# 3. A Movimentação (O motor da automação)
 class Movimentacao(models.Model):
     TIPO_MOVIMENTO = [
-        ('SAIDA', '🔴 Retirada (Vai para o Técnico)'),
-        ('DEVOLUCAO', '🟢 Devolução (Volta para Empresa)'),
-        ('BAIXA', '✅ Baixa em OS (Usado no Cliente)'),
+        ('SAIDA', '🔴 Retirada (Sai do Estoque -> Vai pro Técnico)'),
+        ('DEVOLUCAO', '🟢 Devolução (Sai do Técnico -> Volta pro Estoque)'),
+        ('BAIXA', '✅ Baixa em OS (Sai do Técnico -> Cliente/Lixo)'),
     ]
 
     tecnico = models.ForeignKey(User, on_delete=models.CASCADE, verbose_name="Técnico Responsável")
@@ -54,38 +55,48 @@ class Movimentacao(models.Model):
     quantidade = models.PositiveIntegerField()
     obs = models.CharField(max_length=100, blank=True, null=True, verbose_name="OBS / Nº da OS")
     data = models.DateTimeField(auto_now_add=True)
-    autor_movimento = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='autor_log', verbose_name="Quem registrou (Secretária)")
+    autor_movimento = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, related_name='autor_log', verbose_name="Quem registrou")
 
     def save(self, *args, **kwargs):
-        # Lógica automática de estoque
-        carteira, created = EstoqueTecnico.objects.get_or_create(tecnico=self.tecnico, equipamento=self.equipamento)
+        # Essa lógica só roda quando cria uma NOVA movimentação
+        if self.pk is None: 
+            carteira, created = EstoqueTecnico.objects.get_or_create(tecnico=self.tecnico, equipamento=self.equipamento)
 
-        if self.pk is None: # Só executa se for registro novo
+            # Lógica 1: O Técnico pega material na empresa
             if self.tipo == 'SAIDA':
                 if self.equipamento.quantidade < self.quantidade:
                     raise ValidationError(f"Erro: Só tem {self.equipamento.quantidade} no estoque da empresa!")
+                
+                # AQUI ESTÁ A MÁGICA: Tira da empresa, põe no técnico
                 self.equipamento.quantidade -= self.quantidade
                 carteira.quantidade += self.quantidade
 
+            # Lógica 2: O Técnico devolve (não usou)
             elif self.tipo == 'DEVOLUCAO':
                 if carteira.quantidade < self.quantidade:
                     raise ValidationError(f"Erro: O técnico só tem {carteira.quantidade} em mãos!")
+                
+                # Tira do técnico, devolve pra empresa
                 self.equipamento.quantidade += self.quantidade
                 carteira.quantidade -= self.quantidade
 
+            # Lógica 3: O Técnico usou no cliente (BAIXA)
             elif self.tipo == 'BAIXA':
                 if carteira.quantidade < self.quantidade:
                     raise ValidationError(f"Erro: O técnico tenta baixar mais do que tem!")
+                
+                # SÓ TIRA DO TÉCNICO. Não devolve pra empresa. (Isso já estava certo!)
                 carteira.quantidade -= self.quantidade
             
+            # Salva as alterações nas outras tabelas
             self.equipamento.save()
             carteira.save()
 
         super().save(*args, **kwargs)
 
     class Meta:
-        verbose_name = "Movimentação"
-        verbose_name_plural = "Histórico de Movimentações"
+        verbose_name = "Registrar Movimentação"
+        verbose_name_plural = "Registrar Movimentações"
     
     def __str__(self):
         return f"{self.tipo} - {self.equipamento.nome} ({self.quantidade})"

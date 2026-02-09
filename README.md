@@ -53,5 +53,6 @@ Fale com nosso time de especialistas.
 
 **Dual Core Solutions**
 *Transformando código em eficiência operacional.*
-[Link para seu LinkedIn ou Site]
 
+📧 **E-mail:** dualcoresolutions.tech@gmail.com
+📱 **WhatsApp:** (69) 99245-2255
